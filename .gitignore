@@ -1,0 +1,11 @@
+# pycache
+__pycache__
+
+# wandb
+wandb
+
+# notebooks
+*.ipynb_checkpoints
+
+# pycharm
+.idea/
