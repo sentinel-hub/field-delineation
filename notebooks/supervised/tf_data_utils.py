@@ -205,8 +205,7 @@ def npz_dir_dataset(file_dir_or_list, features, randomize=True, num_parallel=5, 
     np_arrays.append(meanstd_std)
 
     # Read shape and type info
-#     types = tuple(arr.dtype for arr in np_arrays)
-    types = (tf.uint16, tf.float32, tf.float32, tf.float32, tf.float64, tf.float64, tf.float64)
+    types = tuple(arr.dtype for arr in np_arrays)
     shapes = tuple(arr.shape[1:] for arr in np_arrays)
 #     print(shapes)
 
@@ -245,7 +244,7 @@ def _npz_file_lazy_dataset(file_path, fields, feature_names, types, shapes, file
             data = np.load(file_path)
         else:
             data = np.load(filesystem.openbin(file_path))
-            
+
         np_arrays = [data[f] for f in fields]
         
         perc99, meanstd_mean, meanstd_std = _construct_norm_arrays(file_path)
