@@ -155,7 +155,7 @@ def _construct_norm_arrays(file_path):
     return perc99, meanstd_mean, meanstd_std
         
 
-def npz_dir_dataset(file_dir_or_list, features, randomize=True, num_parallel=5, shuffle_size=500):
+def npz_dir_dataset(file_dir_or_list, features, randomize=True, num_parallel=5, shuffle_size=500, filesystem=None):
     """ Creates a tf.data.Dataset from a directory containing numpy .npz files. Files are loaded
     lazily when needed. `num_parallel` files are read in parallel and interleaved together.
     :param file_dir_or_list: directory containing .npz files or a list of paths to .npz files
@@ -177,14 +177,24 @@ def npz_dir_dataset(file_dir_or_list, features, randomize=True, num_parallel=5, 
 
     # If dir, then list files
     if isinstance(file_dir_or_list, str):
-        files = [os.path.join(file_dir_or_list, f) for f in os.listdir(file_dir_or_list)]
+        if filesystem is None:
+            dir_list = os.listdir(file_dir_or_list)
+        else:
+            dir_list = filesystem.listdir(file_dir_or_list)
+        
+        files = [os.path.join(file_dir_or_list, f) for f in dir_list]
 
     fields = list(features.keys())
     feature_names = [features[f] for f in features]
 
     # Read one file for shape info
     file = next(iter(files))
-    data = np.load(file)
+
+    if filesystem is None:
+        data = np.load(file)
+    else:
+        data = np.load(filesystem.openbin(file))
+
     np_arrays = [data[f] for f in fields]
 
     # Append norm arrays 
@@ -195,13 +205,12 @@ def npz_dir_dataset(file_dir_or_list, features, randomize=True, num_parallel=5, 
     np_arrays.append(meanstd_std)
 
     # Read shape and type info
-#     types = tuple(arr.dtype for arr in np_arrays)
-    types = (tf.uint16, tf.float32, tf.float32, tf.float32, tf.float64, tf.float64, tf.float64)
+    types = tuple(arr.dtype for arr in np_arrays)
     shapes = tuple(arr.shape[1:] for arr in np_arrays)
 #     print(shapes)
 
     # Create datasets
-    datasets = [_npz_file_lazy_dataset(file, fields, feature_names, types, shapes) for file in files]
+    datasets = [_npz_file_lazy_dataset(file, fields, feature_names, types, shapes, filesystem) for file in files]
     ds = tf.data.Dataset.from_tensor_slices(datasets)
 
     # Shuffle files and interleave multiple files in parallel
@@ -213,7 +222,7 @@ def npz_dir_dataset(file_dir_or_list, features, randomize=True, num_parallel=5, 
     return ds
 
 
-def _npz_file_lazy_dataset(file_path, fields, feature_names, types, shapes):
+def _npz_file_lazy_dataset(file_path, fields, feature_names, types, shapes, filesystem=None):
     """ Creates a lazy tf.data Dataset from a numpy file.
     Reads the file when first consumed.
     :param file_path: path to the numpy file
@@ -231,7 +240,11 @@ def _npz_file_lazy_dataset(file_path, fields, feature_names, types, shapes):
     """
 
     def _generator():
-        data = np.load(file_path)
+        if filesystem is None:
+            data = np.load(file_path)
+        else:
+            data = np.load(filesystem.openbin(file_path))
+
         np_arrays = [data[f] for f in fields]
         
         perc99, meanstd_mean, meanstd_std = _construct_norm_arrays(file_path)
