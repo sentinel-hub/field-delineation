@@ -76,3 +76,8 @@ The following [notebooks](./notebooks/supervised) deal with the following:
  * `04-train-model-from-cahced-npz`: train the [resunet-a model](https://arxiv.org/pdf/1910.12023.pdf). Modify the 
  config parameters for different behaviour, as well as the network architecture in `niva_models.py`;
  * `tf_data_utils` and `tf_viz_utils`: tensorflow helpers for dataset creation and visualization in `tensorboard`.
+ 
+ 
+## Acknowledgements
+
+This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No. 776115.
