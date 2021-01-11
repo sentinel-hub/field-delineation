@@ -1,26 +1,41 @@
-# Automatic field delineation
+# NIVA - Automatic field delineation
 
 This repo contains code to generate automatic contours for agricultural parcels,
-given Sentinel-2 images. The code uses data for Lithuania 2019, but same code 
-can be used for any other country.
+given Sentinel-2 images. This code has been used ot generate contours for Lithuania 
+and the province of Castilla y Leon.
 
-## Conda environment
+You can find more information about this project in the blog post [Parcel Boundary Detection for CAP](https://medium.com/sentinel-hub/parcel-boundary-detection-for-cap-2a316a77d2f6). 
 
-Dependencies required are included in the [YAML](./delineation-gpu-env.yml) configuration file. To create a conda environment from this,
-run
+## Requirements
+
+The field delineation pipeline uses [SentinelHub](https://www.sentinel-hub.com/) service to download Sentinel-2 imagery, in particular
+using the large-scale [batch processing API](https://docs.sentinel-hub.com/api/latest/api/batch/). The batch processing 
+allows to download images over large Areas of Interest in a very fast and efficient manner. The data is automatically 
+stored in S3 buckets, which need to be [adequately configured](https://docs.sentinel-hub.com/api/latest/api/batch/#aws-s3-bucket-settings). 
+
+### Installation
+
+The `fd` Python 3.5+ package allows to execute the end-to-end field delineation workflow.
+
+To install the `fd` package, clone locally the repository, and from within the repository, run the following commands:
 
 ```bash
-conda env create -f delineation-gpu-env.yml
+pip install -r requirements.txt
+python setup.py install --user
 ```
 
-The deep learning code uses `tensorflow` and our open-source collection [eo-flow](https://github.com/sentinel-hub/eo-flow), 
-which needs to be installed.
+In addition, the field delineation workflow uses the following:
 
-## AWS set-up
+ * Docker containers;
+ * `psql` PostgreSQL database; 
+ * `gdal` geospatial processing library, version >2.4.0. 
 
-To run the notebooks, an AWS S3 bucket need to be set-up as per [these instructions](https://docs.sentinel-hub.com/api/latest/#/BATCH_API/batch_processor?id=aws-s3-bucket-settings), 
-to allow the batch API saving files to it. The credentials need to be either specified in notebooks or 
-in environment variables.
+The numbered notebooks showcase how to execute the end-to-end workflow.
+
+### AWS set-up
+
+To run the notebooks, the `bucket-name` bucket permission need to be set-up,
+as described below.
 
 ```
 bucket_name = "bucket-name"
@@ -29,55 +44,57 @@ aws_secret_access_key = ""
 region = "eu-central-1"
 ```
 
-The repo is currently divided into:
+### Sentinel-Hub credentials
 
- * [input-data](#input-data)
- * notebooks
-    * [data-download](#data-download)
-    * [supervised](#supervised)
- 
+[Sentinel-Hub credentials](apps.sentinel-hub.com/dashboard/#/) need to be added to the download notebook.
 
-## Input data
+### Input data
 
-In this folder we store the geometry for the area-of-interest in WGS84 coordinates. This geometry
-will be split by batch API into smaller parallelizable patches. Here we also store
-meta-data about the patches and training/validation/test patchlets. 
- 
-## Data download
+In order to execute the entire workflow, including training of the deep learning model, the following files are required:
 
-The following [notebooks](./notebooks/data-download) deal with the following:
+ * file with geometry of the AOI (e.g. in `GeoJSON` format); 
+ * file with reference GSAA parcel boundaries (e.g. in `ESRI Shapefile` format);
+ * the time-interval over which we want to estimate parcel boundaries. Predictions can be made for 
+   sub-intervals of this given time period (e.g. aggregation can be done over an arbitrary time interval as a 
+   post-processing step)
 
- * `01-data-download`: downloading the Sentinel-2 images (B-G-R-NIR) using Sentinel-Hub Batch API. For our use-case, we 
- downloaded all Sentinel-2 acquisitions within a time-period (3 months), with a given `maxcc` value. Since we wanted 
- data for 6 months, we repeated the process twice to cover the entire period. In your use-case, you might want to return
- a composite image (e.g. mosaick) over a given period of time instead of each single observation. This operation is specified in the `evalscript`. We can 
- help set this up if needed. Within this notebook, the batch API request is queried and monitored.
- * `02-tiffs-to-patches`: converting tiff files to eopatches. The tiff files saved in the bucket by the batch API are 
- read and converted to eopatches. In our case, two folders holding data for 3 months each are read and concatenated 
- temporally together. Adjust this notebook according to your use-case/`evalscript`. 
- * `03-vector-to-raster`: adding ground-truth vector data from a database to eopatches. Depending on the size and format
-  of the reference GSAA vector data, a task is created to add this info to eopathces and to rasterize it for model training. 
-  In our case, data is added to a database and added to the patches. Different processed masks are computed to train a 
-  multi-task model. 
- * `04-add-cloud-masks`: process the downloaded `CLP` probabilities with `s2cloudless` post-processing to get the `CLM` 
- masks. This is not necessary and `CLM` masks can be downloaded directly from the service (as done for `CLP`).
- 
-After running these steps, eopatches with imaging and reference data should be available on the configured bucket.
+## Content
 
-## Supervised
+This repository has the following content:
 
-The following [notebooks](./notebooks/supervised) deal with the following:
+ * `fd`: modules implementing each part of the workflow;
+ * `input-data`: folder storing the file defining the AOI and the consequent grid definition file;
+ * `notebooks`: folder storing the ordered notebooks to execute the end-to-end workflow.
 
- * `01-patchlets-sampling`: sample patchlets of size `256x256` from the downloaded patches; 
- * `02-patchlets-to-npz-files`: create `.npz` files by aggregating patchlets in chunks (e.g. 2000). This facilitates 
- disk IO and RAM usage during training. Normalisation factors were computed from the eopatches and saved in a 
- separate `.csv` file, along with other meta-info (e.g. from which eopatch the patchlet was sampled from); 
- * `03-patchlets-split-train-cval-test`: split the patchlets into train/validation/test;
- * `04-train-model-from-cahced-npz`: train the [resunet-a model](https://arxiv.org/pdf/1910.12023.pdf). Modify the 
- config parameters for different behaviour, as well as the network architecture in `niva_models.py`;
- * `tf_data_utils` and `tf_viz_utils`: tensorflow helpers for dataset creation and visualization in `tensorboard`.
- 
- 
-## Acknowledgements
+### Notebooks
+
+The field delineation workflow has been designed to scale to large AOIs, by downloading data quickly and efficiently, 
+and by parallelizing execution of pipelines over the tiled data.
+
+[These notebooks](./notebooks/) showcase the different pipelines required to reproduce the entire end-to-end workflow:
+
+ * `01-data-download`: downloading the Sentinel-2 images (B-G-R-NIR) using Sentinel-Hub Batch API; 
+ * `02-tiffs-to-patches`: converts the downloaded tiff files into `EOPatches` (see [`eo-learn`](https://eo-learn.readthedocs.io/en/latest/)), 
+   and computes cloud masks from cloud probabilities;
+ * `03-vector-to-raster`: adds reference vector data from a database to `EOPatches` and creates reference masks used 
+   for training of the model;
+ * `04-patchlets-sampling`: sample `EOPatches` into smaller `256x256` patchlets for each cloud-free time-stamp. The 
+   sampling can be done for positive and negative examples separately;
+ * `05-patchlets-to-npz-files`: the sampled patchlets are chunked and stored into multiple `.npz` files, allowing 
+   to efficiently access the data during training;
+ * `06-create-normalization-stats`: compute normalisation factors for the S2 bands (e.g. B-G-R-NIR) per month. These 
+   factors will be used to normalise the data before training and evaluation;
+ * `07-patchlets-split-k-folds`: split patchlets into K-folds, allowing to perform a robust cross-validation of the models;
+ * `08-train-model-from-cached-npz`: train k-models, one for each left out fold. The [`ResUnet-a` architecture](https://www.sciencedirect.com/science/article/abs/pii/S0924271620300149) 
+   implemented within [`eo-flow`](https://github.com/sentinel-hub/eo-flow) is used as model. A single model can be 
+   derived by averaging the weights of the k-fold models; 
+ * `09-predict-eopatches`: use the trained models to predict parcel boundary probabilities for the entire dataset;
+ * `10-post-process-predictions`: merge the predictions temporally and combine the predicted extent and boundary 
+   probabilities. A time interval can be specified over which the predictions are temporally aggregated;
+ * `11-create-vectors`: vectorise the combined field delineation probabilities; 
+ * `12-utm-zone-merging`: combine spatially vectors from multiple UTM zone if applicable.
+
+### Acknowledgements
 
 This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No. 776115.
+
