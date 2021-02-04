@@ -95,7 +95,7 @@ def get_dataset(config: TrainingConfig, fold: int, augment: bool, num_parallel: 
     data = dict(X='features', y_extent='y_extent', y_boundary='y_boundary', y_distance='y_distance')
 
     dataset = npz_dir_dataset(os.path.join(config.npz_folder, f'fold_{fold}'), data, metadata_path=config.metadata_path,
-                              fold=fold, randomize=randomize, num_parallel=num_parallel, filesystem=filesystem)
+                              fold=fold, randomize=randomize, num_parallel=num_parallel, filesystem=filesystem, npz_from_s3=npz_from_s3)
 
     normalizer = NORMALIZER[config.normalize]
 
