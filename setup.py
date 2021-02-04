@@ -22,7 +22,7 @@ setup(
     author='Sinergise EO research team',
     author_email='eoresearch@sinergise.com',
     packages=find_packages(),
-    package_data={'fd': ['evalscripts/dates_evalscript.js', 'evalscripts/data_evalscript.js']},
+    package_data={'fd': ['evalscripts/data_evalscript.js']},
     include_package_data=True,
     install_requires=parse_requirements('requirements.txt'),
     extras_require={
