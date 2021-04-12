@@ -1,3 +1,13 @@
+#
+# Copyright (c) Sinergise, 2019 -- 2021.
+#
+# This file belongs to subproject "field-delineation" of project NIVA (www.niva4cap.eu).
+# All rights reserved.
+#
+# This source code is licensed under the MIT license found in the LICENSE
+# file in the root directory of this source tree.
+#
+
 import os
 import re
 from setuptools import setup, find_packages
@@ -18,7 +28,7 @@ setup(
     python_requires='>=3.6',
     version=get_version(),
     description='EO Research Field Delineation',
-    url='https://github.com/sentinel-hub/field-delineation',
+    url='https://gitlab.com/nivaeu/uc2_fielddelineation',
     author='Sinergise EO research team',
     author_email='eoresearch@sinergise.com',
     packages=find_packages(),

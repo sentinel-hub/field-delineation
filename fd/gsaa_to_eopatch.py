@@ -1,24 +1,27 @@
-from typing import Tuple
+#
+# Copyright (c) Sinergise, 2019 -- 2021.
+#
+# This file belongs to subproject "field-delineation" of project NIVA (www.niva4cap.eu).
+# All rights reserved.
+#
+# This source code is licensed under the MIT license found in the LICENSE
+# file in the root directory of this source tree.
+#
 
 from dataclasses import dataclass
-
-import pyproj
-from shapely.ops import transform
-
-import psycopg2
+from typing import Tuple
 
 import geopandas as gpd
-
 import numpy as np
-from skimage.morphology import binary_dilation, disk
-from skimage.measure import label
-from scipy.ndimage import distance_transform_edt
-
-from sentinelhub import SHConfig
-
-from eolearn.core import FeatureType, EOPatch, EOTask, EOWorkflow, LinearWorkflow, \
-    LoadTask, SaveTask, OverwritePermission
+import psycopg2
+import pyproj
+from eolearn.core import EOPatch, EOTask, EOWorkflow, FeatureType, LinearWorkflow, LoadTask, OverwritePermission, \
+    SaveTask
 from eolearn.geometry import VectorToRaster
+from scipy.ndimage import distance_transform_edt
+from shapely.ops import transform
+from skimage.measure import label
+from skimage.morphology import binary_dilation, disk
 
 from .utils import BaseConfig, set_sh_config
 

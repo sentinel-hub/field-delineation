@@ -6,6 +6,16 @@ and the province of Castilla y Leon.
 
 You can find more information about this project in the blog post [Parcel Boundary Detection for CAP](https://medium.com/sentinel-hub/parcel-boundary-detection-for-cap-2a316a77d2f6). 
 
+
+## Introduction
+
+
+This sub-project is part of the ["New IACS Vision in Action” --- NIVA](https://www.niva4cap.eu/) project that delivers a suite of digital solutions, e-tools and good practices for e-governance and initiates an innovation ecosystem to support further development of IACS that will facilitate data and information flows.
+
+This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No 842009.
+
+Please visit the [website](https://www.niva4cap.eu) for further information. A complete list of the sub-projects made available under the NIVA project can be found on [gitlab](https://gitlab.com/nivaeu/)
+
 ## Requirements
 
 The field delineation pipeline uses [SentinelHub](https://www.sentinel-hub.com/) service to download Sentinel-2 imagery, in particular
@@ -93,8 +103,4 @@ and by parallelizing execution of pipelines over the tiled data.
    probabilities. A time interval can be specified over which the predictions are temporally aggregated;
  * `11-create-vectors`: vectorise the combined field delineation probabilities; 
  * `12-utm-zone-merging`: combine spatially vectors from multiple UTM zone if applicable.
-
-### Acknowledgements
-
-This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No. 776115.
 
