@@ -10,7 +10,7 @@ You can find more information about this project in the blog post [Parcel Bounda
 ## Introduction
 
 
-This sub-project is part of the ["New IACS Vision in Action” --- NIVA](https://www.niva4cap.eu/) project that delivers a a suite of digital solutions, e-tools and good practices for e-governance and initiates an innovation ecosystem to support further development of IACS that will facilitate data and information flows.
+This sub-project is part of the ["New IACS Vision in Action” --- NIVA](https://www.niva4cap.eu/) project that delivers a suite of digital solutions, e-tools and good practices for e-governance and initiates an innovation ecosystem to support further development of IACS that will facilitate data and information flows.
 
 This project has received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreement No 842009.
 
