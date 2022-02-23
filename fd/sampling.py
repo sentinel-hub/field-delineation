@@ -8,28 +8,23 @@
 # file in the root directory of this source tree.
 #
 
-import os
 import logging
+import os
+from dataclasses import dataclass
 from typing import List, Tuple
 
-import numpy as np
 import geopandas as gpd
-from dataclasses import dataclass
+import numpy as np
 
-from fs_s3fs import S3FS
-
-from sentinelhub import BBox
 from eolearn.core import FeatureType, EOPatch, EOTask, FeatureTypeSet
+from fd.utils import BaseConfig, prepare_filesystem
+from sentinelhub import BBox
 
 LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class SamplingConfig:
-    bucket_name: str
-    aws_access_key_id: str
-    aws_secret_access_key: str
-    aws_region: str
+class SamplingConfig(BaseConfig):
     eopatches_location: str
     output_path: str
     sample_positive: bool = True
@@ -55,8 +50,8 @@ class SamplePatchlets(EOTask):
     S2_RESOLUTION = 10
 
     def __init__(self, feature: Tuple[FeatureType, str], buffer: int, patch_size: int, num_samples: int,
-                 max_retries: int, fraction_valid: float = 0.2, no_data_value: int = 0,
-                 sample_features=..., sample_positive: bool = True, cloud_coverage: float = 0.05):
+                 max_retries: int, sample_features: List[ Tuple[FeatureType, str]], fraction_valid: float = 0.2,
+                 no_data_value: int = 0, sample_positive: bool = True, cloud_coverage: float = 0.05):
         """ Task to sample pixels from a reference timeless raster mask, excluding a no valid data value
         """
         self.feature_type, self.feature_name, self.new_feature_name = next(
@@ -115,57 +110,40 @@ class SamplePatchlets(EOTask):
                 LOGGER.warning(f'Could not determine an area with good enough ratio of valid sampled pixels for '
                                f'patchlet number: {patchlet_num}')
                 continue
+
+            clm_patchlet = eopatch.mask['CLM'][:, row:row + self.patch_size, col:col + self.patch_size, :]
+            valid_patchlet = eopatch.mask['IS_DATA'][:, row:row + self.patch_size,
+                             col:col + self.patch_size, :]
+            idxs = self._get_clear_indices(clm_patchlet, valid_patchlet)
+            new_eopatch.timestamp = list(timestamps[idxs])
+
             for feature_type, feature_name in self.sample_features(eopatch):
                 if feature_type in FeatureTypeSet.RASTER_TYPES.intersection(FeatureTypeSet.SPATIAL_TYPES):
                     feature_data = eopatch[feature_type][feature_name]
                     if feature_type.is_time_dependent():
                         sampled_data = feature_data[:, row:row + self.patch_size, col:col + self.patch_size, :]
-                        clm_patchlet = eopatch.mask['CLM'][:, row:row + self.patch_size, col:col + self.patch_size, :]
-                        valid_patchlet = eopatch.mask['IS_DATA'][:, row:row + self.patch_size,
-                                         col:col + self.patch_size, :]
-                        idxs = self._get_clear_indices(clm_patchlet, valid_patchlet)
                         sampled_data = sampled_data[idxs]
-                        new_eopatch.timestamp = list(timestamps[idxs])
-
                     else:
                         sampled_data = feature_data[row:row + self.patch_size, col:col + self.patch_size, :]
 
-                    # here a copy of sampled array is returned and assigned to feature of a shallow copy
-
-                    patchlet_loc = np.array([row, col, self.patch_size])
                     new_eopatch[feature_type][f'{feature_name}'] = sampled_data
-                    new_eopatch[FeatureType.SCALAR_TIMELESS][f'PATCHLET_LOC'] = patchlet_loc
-                    new_eopatch[FeatureType.MASK_TIMELESS][f'EXTENT'] = eopatch.mask_timeless['EXTENT'][
-                                                                        row:row + self.patch_size,
-                                                                        col:col + self.patch_size]
-                    new_eopatch[FeatureType.MASK_TIMELESS][f'BOUNDARY'] = eopatch.mask_timeless['BOUNDARY'][
-                                                                          row:row + self.patch_size,
-                                                                          col:col + self.patch_size]
-                    new_eopatch[FeatureType.DATA_TIMELESS][f'DISTANCE'] = eopatch.data_timeless['DISTANCE'][
-                                                                          row:row + self.patch_size,
-                                                                          col:col + self.patch_size]
 
-                    r, c, s = patchlet_loc
-                    new_eopatch.bbox = BBox(((eopatch.bbox.min_x + self.S2_RESOLUTION * c,
-                                              eopatch.bbox.max_y - self.S2_RESOLUTION * (r + s)),
-                                             (eopatch.bbox.min_x + self.S2_RESOLUTION * (c + s),
-                                              eopatch.bbox.max_y - self.S2_RESOLUTION * r)),
-                                            eopatch.bbox.crs)
+            patchlet_loc = np.array([row, col, self.patch_size])
+            new_eopatch[FeatureType.SCALAR_TIMELESS][f'PATCHLET_LOC'] = patchlet_loc
+            r, c, s = patchlet_loc
+            new_eopatch.bbox = BBox(((eopatch.bbox.min_x + self.S2_RESOLUTION * c,
+                                      eopatch.bbox.max_y - self.S2_RESOLUTION * (r + s)),
+                                     (eopatch.bbox.min_x + self.S2_RESOLUTION * (c + s),
+                                      eopatch.bbox.max_y - self.S2_RESOLUTION * r)),
+                                    eopatch.bbox.crs)
 
-                    eops_out.append(new_eopatch)
+            eops_out.append(new_eopatch)
         return eops_out
-
-
-def _prepare_filesystem(sampling_config: SamplingConfig) -> S3FS:
-    return S3FS(bucket_name=sampling_config.bucket_name,
-                aws_access_key_id=sampling_config.aws_access_key_id,
-                aws_secret_access_key=sampling_config.aws_secret_access_key,
-                region=sampling_config.aws_region)
 
 
 def prepare_eopatches_paths(sampling_config: SamplingConfig) -> List[str]:
     eopatches_paths = [os.path.join(sampling_config.eopatches_location, eop_name)
-                       for eop_name in _prepare_filesystem(sampling_config).listdir(sampling_config.eopatches_location)]
+                       for eop_name in prepare_filesystem(sampling_config).listdir(sampling_config.eopatches_location)]
 
     if not sampling_config.sample_positive:
         area_geometry = gpd.read_file(sampling_config.area_geometry_file)
@@ -177,14 +155,17 @@ def prepare_eopatches_paths(sampling_config: SamplingConfig) -> List[str]:
 
 
 def sample_patch(eop_path: str, sampling_config: SamplingConfig) -> None:
-    filesystem = _prepare_filesystem(sampling_config)
+    filesystem = prepare_filesystem(sampling_config)
     task = SamplePatchlets(feature=(FeatureType.MASK_TIMELESS, sampling_config.mask_feature_name),
                            buffer=sampling_config.buffer,
                            patch_size=sampling_config.patch_size,
                            num_samples=sampling_config.num_samples,
                            max_retries=sampling_config.max_retries,
                            fraction_valid=sampling_config.fraction_valid,
-                           sample_features=(FeatureType.DATA, sampling_config.sampled_feature_name),
+                           sample_features=[(FeatureType.DATA, sampling_config.sampled_feature_name),
+                                            (FeatureType.MASK_TIMELESS, 'EXTENT'),
+                                            (FeatureType.MASK_TIMELESS, 'BOUNDARY'),
+                                            (FeatureType.DATA_TIMELESS, 'DISTANCE')],
                            sample_positive=sampling_config.sample_positive)
 
     eop_name = os.path.basename(eop_path)
@@ -198,4 +179,3 @@ def sample_patch(eop_path: str, sampling_config: SamplingConfig) -> None:
         LOGGER.error(f'Key error. Could not find key: {e}')
     except ValueError as e:
         LOGGER.error(f'Value error. Value does not exist: {e}')
-

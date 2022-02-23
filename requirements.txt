@@ -10,7 +10,7 @@ python-dateutil
 sentinelhub
 tqdm
 wandb
-eo-learn
+eo-learn==0.10.2
 s2cloudless
 git+https://github.com/sentinel-hub/eo-flow.git@develop
 dataclasses
@@ -24,3 +24,4 @@ matplotlib
 scikit-learn
 lxml
 pandarallel
+ipywidgets

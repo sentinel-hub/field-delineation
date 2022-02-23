@@ -8,20 +8,27 @@
 # file in the root directory of this source tree.
 #
 
-from dataclasses import dataclass
 from typing import Tuple
 
-import geopandas as gpd
-import numpy as np
-import psycopg2
+from dataclasses import dataclass
+
 import pyproj
-from eolearn.core import EOPatch, EOTask, EOWorkflow, FeatureType, LinearWorkflow, LoadTask, OverwritePermission, \
-    SaveTask
-from eolearn.geometry import VectorToRaster
-from scipy.ndimage import distance_transform_edt
 from shapely.ops import transform
-from skimage.measure import label
+
+import psycopg2
+
+import geopandas as gpd
+
+import numpy as np
 from skimage.morphology import binary_dilation, disk
+from skimage.measure import label
+from scipy.ndimage import distance_transform_edt
+
+from sentinelhub import SHConfig
+
+from eolearn.core import FeatureType, EOPatch, EOTask, EOWorkflow, LinearWorkflow, \
+    LoadTask, SaveTask, OverwritePermission
+from eolearn.geometry import VectorToRaster
 
 from .utils import BaseConfig, set_sh_config
 

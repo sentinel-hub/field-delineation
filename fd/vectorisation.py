@@ -8,36 +8,30 @@
 # file in the root directory of this source tree.
 #
 
+import copy
+import logging
 import os
 import time
-import logging
-from glob import glob
-import copy
-from functools import partial
-from typing import List, Tuple
-
 from dataclasses import dataclass
+from functools import partial
+from glob import glob
+from typing import List, Optional, Tuple, Union
 
-import rasterio
-
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-import geopandas as gpd
-from geopandas.tools import sjoin
+import rasterio
 from fs.copy import copy_dir
-import pandarallel
-
+from geopandas.tools import sjoin
+from lxml import etree
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
-
-from lxml import etree
+from tqdm.auto import tqdm as tqdm
 
 from sentinelhub import CRS
-
 from .utils import BaseConfig, multiprocess, prepare_filesystem
 
 LOGGER = logging.getLogger(__name__)
-LOGGER.setLevel(logging.DEBUG)
 
 
 @dataclass
@@ -71,15 +65,27 @@ class MergeUTMsConfig(BaseConfig):
     n_workers: int = 34
 
 
-average_function = """
+def average_function(no_data: Union[int, float] = 0, round_output: bool =False) -> str:
+    """ A Python function that will be added to VRT and used to calculate weighted average over overlaps
+
+    :param no_data: no data pixel value (default = 0)
+    :param round_output: flag to round the output (to 0 decimals). Useful when the final result will be in Int.
+    :return: Function (as a string)
+    """
+    rounding = 'out = np.round(out, 0)' if round_output else ''
+    return f"""
 import numpy as np
 
 def average(in_ar, out_ar, xoff, yoff, xsize, ysize, raster_xsize, raster_ysize, buf_radius, gt, **kwargs):
     p, w = np.split(np.array(in_ar), 2, axis=0)
-    w_sum = np.sum(w, axis=0)
-    p_sum = np.sum(p, axis=0)
-    v = np.sum(p*w, axis=0)
-    out_ar[:] = np.clip(np.where(w_sum==0, p_sum, v/w_sum), a_min=0., a_max=1.)
+    n_overlaps = np.sum(p!={no_data}, axis=0)
+    w_sum = np.sum(w, axis=0, dtype=np.float32) 
+    p_sum = np.sum(p, axis=0, dtype=np.float32) 
+    weighted = np.sum(p*w, axis=0, dtype=np.float32)
+    out = np.where((n_overlaps>1) & (w_sum>0) , weighted/w_sum, p_sum/n_overlaps)
+    {rounding}
+    out_ar[:] = out
+    
 """
 
 
@@ -113,17 +119,20 @@ def get_weights(shape: Tuple[int, int], buffer: Tuple[int, int], low: float = 0,
     return weight.astype(np.float32)
 
 
-def write_vrt(files: List[str], weights_file: str, out_vrt: str, function: str = average_function):
+def write_vrt(files: List[str], weights_file: str, out_vrt: str, function: Optional[str] = None):
     """ Write virtual raster
 
     Function that will first build a temp.vrt for the input files, and then modify it for purposes of spatial merging
     of overlaps using the provided function
     """
-    
+
+    if not function:
+        function = average_function()
+
     # build a vrt from list of input files
     gdal_str = f'gdalbuildvrt temp.vrt -b 1 {" ".join(files)}'
     os.system(gdal_str)
-    
+
     # fix the vrt
     root = etree.parse('temp.vrt').getroot()
     vrtrasterband = root.find('VRTRasterBand')
@@ -145,10 +154,16 @@ def write_vrt(files: List[str], weights_file: str, out_vrt: str, function: str =
 
     new_sources = []
     for child in rasterbandchildren:
-        raster_band_tag.append(child)
+        if child.tag == 'NoDataValue':
+            pass
+        else:
+            raster_band_tag.append(child)
         if child.tag == 'ComplexSource':
             new_source = copy.deepcopy(child)
             new_source.find('SourceFilename').text = weights_file
+            new_source.find('SourceProperties').attrib['DataType'] = 'Float32'
+            for nodata in new_source.xpath('//NODATA'):
+                nodata.getparent().remove(nodata)
             new_sources.append(new_source)
 
     for new_source in new_sources:
@@ -161,10 +176,12 @@ def write_vrt(files: List[str], weights_file: str, out_vrt: str, function: str =
 
 
 def run_contour(col: int, row: int, size: int, vrt_file: str, threshold: float = 0.6,
-                contours_dir: str = '.', cleanup: bool = True) -> Tuple[str, bool, str]:
+                contours_dir: str = '.', cleanup: bool = True, skip_existing: bool = True) -> Tuple[str, bool, str]:
     """ Will create a (small) tiff file over a srcwin (row, col, size, size) and run gdal_contour on it. """
 
     file = f'merged_{row}_{col}_{size}_{size}'
+    if skip_existing and os.path.exists(file):
+        return file, True, 'Loaded existing file ...'
     try:
         gdal_str = f'gdal_translate --config GDAL_VRT_ENABLE_PYTHON YES -srcwin {col} {row} {size} {size} {vrt_file} {file}.tiff'
         os.system(gdal_str)
@@ -201,11 +218,12 @@ def split_intersecting(df: gpd.GeoDataFrame, overlap: Polygon) -> Tuple[gpd.GeoD
     possible_matches_index = list(index.intersection(overlap.bounds))
     possible_matches = df.iloc[possible_matches_index]
     precise_matches = possible_matches.intersects(overlap).index
+
     if len(precise_matches):
         return df[~df.index.isin(precise_matches)].copy(), df[df.index.isin(precise_matches)].copy()
-    else:
-        return df, gpd.GeoDataFrame(geometry=[], crs=df.crs)
 
+    return df, gpd.GeoDataFrame(geometry=[], crs=df.crs)
+    
 
 def merge_intersecting(df1: gpd.GeoDataFrame, df2: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """ Merge two dataframes of geometries into one """
@@ -267,7 +285,7 @@ def _process_row(row: int, vrt_file: str, vrt_dim: Tuple, contours_dir: str = '.
     try:
         col = 0
         merged = None
-        prev_name, finished, exc = run_contour(col, row, size, vrt_file, threshold, contours_dir, cleanup)
+        prev_name, finished, exc = run_contour(col, row, size, vrt_file, threshold, contours_dir, cleanup, skip_existing)
         if not finished:
             return merged_file, finished, exc
         prev = unpack_contours(prev_name, threshold=threshold)
@@ -276,7 +294,7 @@ def _process_row(row: int, vrt_file: str, vrt_dim: Tuple, contours_dir: str = '.
         while col <= (vrt_dim[0] - size):
             col = col + size - buff
             offset = col, row
-            cur_name, finished, exc = run_contour(col, row, size, vrt_file, threshold, contours_dir, cleanup)
+            cur_name, finished, exc = run_contour(col, row, size, vrt_file, threshold, contours_dir, cleanup, skip_existing)
             if not finished:
                 return merged_file, finished, exc
             cur = unpack_contours(cur_name, threshold=threshold)
@@ -299,7 +317,7 @@ def merge_rows(rows: List[str], vrt_file: str, size: int = 500, buffer: int = 10
     merged = None
     prev_name = rows[0]
     prev = gpd.read_file(prev_name)
-    for ridx, cur_name in enumerate(rows[1:], start=1):
+    for ridx, cur_name in tqdm(enumerate(rows[1:], start=1), total=len(rows)-1):
         cur = gpd.read_file(cur_name)
         merged, prev = concat_consecutive(merged, prev, cur, (0, ridx * (size - buffer)), (vrt_dim[0], buffer),
                                           (0, size - buffer), transform)
@@ -363,7 +381,7 @@ def merging_rows(row_dict: dict, skip_existing: bool = True) -> str:
     merged.to_file(merged_contours_file, driver='GPKG')
 
     LOGGER.info(f'Merging rows and writing results for {row_dict["time_interval"]}/{row_dict["utm"]} done'
-          f' in {(time.time() - start) / 60} min!\n\n')
+                f' in {(time.time() - start) / 60} min!\n\n')
     return merged_contours_file
 
 
@@ -433,15 +451,15 @@ def run_vectorisation(config: VectorisationConfig) -> List[str]:
                          'contours_dir': config.contours_dir
                          })
 
-            LOGGER.info(f'Row contours processing for {time_interval}/{utm} done in {(time.time() - start) / 60} min!\n\n')
+            LOGGER.info(
+                f'Row contours processing for {time_interval}/{utm} done in {(time.time() - start) / 60} min!\n\n')
 
     list_of_merged_files = multiprocess(merging_rows, rows, max_workers=config.max_workers)
 
     return list_of_merged_files
 
 
-def utm_zone_merging(config: MergeUTMsConfig, overlap_df: gpd.GeoDataFrame, zones: gpd.GeoDataFrame,
-                     parallel: bool = False):
+def utm_zone_merging(config: MergeUTMsConfig, overlap_df: gpd.GeoDataFrame, zones: gpd.GeoDataFrame):
     """
     Function to perform utm zone merging. Currently support merging of 2 UTM zones only
 
@@ -450,9 +468,6 @@ def utm_zone_merging(config: MergeUTMsConfig, overlap_df: gpd.GeoDataFrame, zone
     assert len(config.utms) == 2, 'The function supports merging of 2 UTMs only at the moment'
     assert CRS(config.resulting_crs).pyproj_crs().axis_info[0].unit_name == 'metre', \
         'The resulting CRS should have axis units in metres.'
-
-    if parallel:
-        pandarallel.pandarallel.initialize(nb_workers=config.n_workers, progress_bar=True)
 
     for time_window in config.time_intervals:
         LOGGER.info(f'merging utms for {time_window} ...')
@@ -492,10 +507,7 @@ def utm_zone_merging(config: MergeUTMsConfig, overlap_df: gpd.GeoDataFrame, zone
                          for overlapping_utm, prefix in zip(overlapping_utms, prefixes)]
 
         LOGGER.info(f'\trunning union of {len(overlaps)} overlapping geometries ...')
-        if parallel:
-            overlaps['geometry'] = overlaps.parallel_apply(p_union, axis=1)
-        else: 
-            overlaps['geometry'] = overlaps.apply(lambda r: r.l_geom.union(r.r_geom), axis=1)
+        overlaps['geometry'] = overlaps.apply(lambda r: r.l_geom.union(r.r_geom), axis=1)
 
         overlaps = overlaps[~(overlaps.is_empty | overlaps.geometry.area.isna())]
 
@@ -515,11 +527,7 @@ def utm_zone_merging(config: MergeUTMsConfig, overlap_df: gpd.GeoDataFrame, zone
         delineated_fields = delineated_fields[delineated_fields.geometry.area < config.max_area]
 
         LOGGER.info(f'\tsimplifying geometries ...')
-        if parallel:
-            partial_fn = partial(p_simplify, tolerance=config.simplify_tolerance)
-            delineated_fields['geometry'] = delineated_fields.parallel_apply(partial_fn, axis=1)
-        else:
-            delineated_fields['geometry'] = delineated_fields.geometry.simplify(config.simplify_tolerance)
+        delineated_fields['geometry'] = delineated_fields.geometry.simplify(config.simplify_tolerance)
 
         LOGGER.info(f'\twriting output ...')
         delineated_fields.to_file(f'{config.contours_dir}/delineated_fields_{time_window}.gpkg', driver='GPKG')

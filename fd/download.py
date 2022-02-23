@@ -8,24 +8,22 @@
 # file in the root directory of this source tree.
 #
 
-import os
-import time
 import json
 import logging
-from dateutil.parser import parse
+import os
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List
 
-from tqdm.auto import tqdm
-from fs_s3fs import S3FS
-
-from shapely.geometry import Polygon
 import geopandas as gpd
+from dateutil.parser import parse
+from fs_s3fs import S3FS
+from shapely.geometry import Polygon
+from tqdm.auto import tqdm
 
-from dataclasses import dataclass
-
-from sentinelhub import Geometry, CRS, BatchSplitter, SentinelHubBatch, SentinelHubRequest, DataCollection
-
+from sentinelhub import Geometry, CRS, BatchSplitter, SentinelHubBatch, SentinelHubRequest, DataCollection, \
+    BatchRequest, BatchRequestStatus
 from .utils import BaseConfig, set_sh_config
 
 LOGGER = logging.getLogger(__name__)
@@ -73,45 +71,56 @@ def simplify_geometry(aoi: Geometry,
 def plot_batch_splitter(splitter: BatchSplitter):
     """ Plots tiles and area geometry from a splitter class
     """
-    gdf = gpd.GeoDataFrame(dict(status=[info['status'] for info in splitter.get_info_list()],
-                                geometry=splitter.get_bbox_list()),
-                           crs=CRS.WGS84.pyproj_crs())
+    gdf = get_batch_tiles(splitter)
     ax = gdf.plot(column='status', legend=True, figsize=(10, 10))
 
-    geometry = Geometry(splitter.get_area_shape(), splitter.crs)
-    geometry = geometry.transform(CRS.WGS84)
     area_series = gpd.GeoSeries(
-        [geometry.geometry],
-        crs=geometry.crs.pyproj_crs()
+        [splitter.get_area_shape()],
+        crs=splitter.crs.pyproj_crs()
     )
     area_series.plot(ax=ax, facecolor='none', edgecolor='black')
 
 
-def get_tile_status_counts(batch_request: SentinelHubBatch) -> dict:
+def get_batch_tiles(splitter: BatchSplitter) -> gpd.GeoDataFrame:
+    tile_geometries = [Geometry(bbox.geometry, bbox.crs) for bbox in splitter.get_bbox_list()]
+    tile_geometries = [geometry.transform(splitter.crs) for geometry in tile_geometries]
+
+    return gpd.GeoDataFrame(
+        {
+            'id': [info['id'] for info in splitter.get_info_list()],
+            'name': [info['name'] for info in splitter.get_info_list()],
+            'status': [info['status'] for info in splitter.get_info_list()]
+        },
+        geometry=[geometry.geometry for geometry in tile_geometries],
+        crs=splitter.crs.pyproj_crs()
+    )
+
+
+def get_tile_status_counts(batch: SentinelHubBatch, request: BatchRequest) -> dict:
     """ Returns counts how many tiles have a certain status
     """
     stats = {}
 
-    for tile in batch_request.iter_tiles():
+    for tile in batch.iter_tiles(batch_request=request):
         status = tile['status']
         stats[status] = stats.get(status, 0) + 1
 
     return stats
 
 
-def monitor_batch_job(batch_request: SentinelHubBatch, sleep_time: int = 120):
+def monitor_batch_job(batch: SentinelHubBatch, batch_request: BatchRequest, sleep_time: int = 120):
     """ Keeps checking number of processed tiles until the batch request finishes. During the process it shows a
     progress bar and at the end it logs if any tiles failed
     """
-    batch_request.update_info()
-    while batch_request.info['status'] in ['CREATED', 'ANALYSING']:
+    batch_request = batch.get_request(batch_request)
+    while batch_request.status in [BatchRequestStatus.CREATED, BatchRequestStatus.ANALYSING]:
         time.sleep(5)
-        batch_request.update_info()
+        batch_request = batch.get_request(batch_request)
 
-    with tqdm(total=batch_request.info['tileCount']) as progress_bar:
+    with tqdm(total=batch_request.tile_count) as progress_bar:
         finished_count = 0
         while True:
-            tile_counts = get_tile_status_counts(batch_request)
+            tile_counts = get_tile_status_counts(batch, batch_request)
             new_finished_count = tile_counts.get('PROCESSED', 0) + tile_counts.get('FAILED', 0)
 
             progress_bar.update(new_finished_count - finished_count)
@@ -154,9 +163,10 @@ def load_evalscript():
     return evalscript
 
 
-def create_batch_request(config: DownloadConfig,
+def create_batch_request(batch: SentinelHubBatch,
+                         config: DownloadConfig,
                          output_responses: List[dict],
-                         description: str = 'Batch request') -> SentinelHubBatch:
+                         description: str = 'Batch request') -> BatchRequest:
     """ Helper function that creates a SH batch request
     """
     LOGGER.info('Read and simplify AOI geometry')
@@ -165,10 +175,10 @@ def create_batch_request(config: DownloadConfig,
     aoi = Geometry(aoi_gdf.geometry.values[0], crs=CRS.WGS84)
     aoi = simplify_geometry(aoi)
 
-    LOGGER.info('\nSet up SH and AWS credentials')
+    LOGGER.info('Set up SH and AWS credentials')
     _ = set_sh_config(config)
 
-    LOGGER.info('\nThis evalscript is executed')
+    LOGGER.info('This evalscript is executed')
     evalscript = load_evalscript()
 
     sentinelhub_request = SentinelHubRequest(
@@ -185,13 +195,15 @@ def create_batch_request(config: DownloadConfig,
         geometry=aoi
     )
 
-    batch_request = SentinelHubBatch.create(
-        sentinelhub_request,
+    batch_request = batch.create(
+        sentinelhub_request=sentinelhub_request,
         tiling_grid=SentinelHubBatch.tiling_grid(
             **config.grid_definition
         ),
         output=SentinelHubBatch.output(
-            default_tile_path=f's3://{config.bucket_name}/{config.tiles_path}/<tileName>/<outputId>.<format>'
+            default_tile_path=f's3://{config.bucket_name}/{config.tiles_path}/<tileName>/<outputId>.<format>',
+            skip_existing=False,
+            overwrite=True
         ),
         description=description
     )

@@ -1,4 +1,3 @@
-#
 # Copyright (c) Sinergise, 2019 -- 2021.
 #
 # This file belongs to subproject "field-delineation" of project NIVA (www.niva4cap.eu).
@@ -10,26 +9,20 @@
 
 import json
 import os
-from typing import Tuple
-
 from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
-from fs_s3fs import S3FS
+from eoflow.models.losses import TanimotoDistanceLoss
+from eoflow.models.metrics import MCCMetric
+from eoflow.models.segmentation_unets import ResUnetA
+from eolearn.core import EOPatch, FeatureType, LoadTask, OverwritePermission, SaveTask
 from fs.copy import copy_dir, copy_file
-
+from fs_s3fs import S3FS
 from tensorflow.keras.metrics import CategoricalAccuracy, MeanIoU
 
-from eolearn.core import EOPatch, FeatureType, LoadTask, SaveTask, OverwritePermission
-from eoflow.models.segmentation_unets import ResUnetA
-
-from eoflow.models.losses import TanimotoDistanceLoss
-
-from eoflow.models.metrics import MCCMetric
-
-from .utils import BaseConfig, prepare_filesystem, set_sh_config
+from .utils import BaseConfig, set_sh_config
 
 
 @dataclass
@@ -49,10 +42,12 @@ class PredictionConfig(BaseConfig):
     metadata_path: str
     batch_size: int
     normalise: str
+    pad_buffer: int
+    crop_buffer: int
+    reference_extent: Optional[Tuple[FeatureType, str]] = None 
+    reference_boundary: Optional[Tuple[FeatureType, str]] = None 
+    reference_distance: Optional[Tuple[FeatureType, str]] = None
     feature_bands: Tuple[FeatureType, str] = (FeatureType.DATA, 'BANDS')
-    reference_extent: Tuple[FeatureType, str] = (FeatureType.MASK_TIMELESS, 'EXTENT')
-    reference_boundary: Tuple[FeatureType, str] = (FeatureType.MASK_TIMELESS, 'BOUNDARY')
-    reference_distance: Tuple[FeatureType, str] = (FeatureType.DATA_TIMELESS, 'DISTANCE')
 
 
 def binary_one_hot_encoder(array: np.ndarray) -> np.ndarray:
@@ -60,14 +55,14 @@ def binary_one_hot_encoder(array: np.ndarray) -> np.ndarray:
     return np.concatenate([1 - array, array], axis=-1)
 
 
-def crop_array(array: np.ndarray, buffer: int = 26) -> np.ndarray:
+def crop_array(array: np.ndarray, buffer: int) -> np.ndarray:
     """ Crop height and width of a 4D array given a buffer size. Array has shape B x H x W x C """
     assert array.ndim == 4, 'Input array of wrong dimension, needs to be 4D B x H x W x C'
 
     return array[:, buffer:-buffer:, buffer:-buffer:, :]
 
 
-def pad_array(array: np.ndarray, buffer: int = 11) -> np.ndarray:
+def pad_array(array: np.ndarray, buffer: int) -> np.ndarray:
     """ Pad height and width dimensions of a 4D array with a given buffer. Height and with are in 2nd and 3rd dim """
     assert array.ndim == 4, 'Input array of wrong dimension, needs to be 4D B x H x W x C'
 
@@ -102,21 +97,26 @@ def prediction_fn(eop: EOPatch, n_classes: int,
                   suffix: str,
                   batch_size: int,
                   bands_feature: Tuple[FeatureType, str],
-                  reference_extent: Tuple[FeatureType, str],
-                  reference_boundary: Tuple[FeatureType, str],
-                  reference_distance: Tuple[FeatureType, str]) -> EOPatch:
+                  crop_buffer: int,
+                  pad_buffer: int,
+                  reference_extent: Optional[Tuple[FeatureType, str]],
+                  reference_boundary:  Optional[Tuple[FeatureType, str]],
+                  reference_distance:  Optional[Tuple[FeatureType, str]]) -> EOPatch:
     """ Perform prediction for all timestamps in an EOPatch given a model and normalisation factors """
     assert normalise in ['to_meanstd', 'to_medianstd']
 
     extent_pred, boundary_pred, distance_pred = [], [], []
     metrics = []
 
-    padded = pad_array(eop[bands_feature])
+    padded = pad_array(eop[bands_feature], buffer=pad_buffer)
 
-    tanimoto_loss = get_tanimoto_loss()
-    accuracy_metric = get_accuracy_metric()
-    iou_metric = get_iou_metric(n_classes=n_classes)
-    mcc_metric = get_mcc_metric(n_classes=n_classes)
+    calc_metrics = all([ref for ref in [reference_extent, reference_distance, reference_boundary]])
+
+    if calc_metrics:
+        tanimoto_loss = get_tanimoto_loss()
+        accuracy_metric = get_accuracy_metric()
+        iou_metric = get_iou_metric(n_classes=n_classes)
+        mcc_metric = get_mcc_metric(n_classes=n_classes)
 
     for timestamp, bands in zip(eop.timestamp, padded):
 
@@ -124,48 +124,54 @@ def prediction_fn(eop: EOPatch, n_classes: int,
 
         norm_factors_month = normalisation_factors[normalisation_factors['month'] == month].iloc[0]
 
-        dn_mean = np.array([norm_factors_month.norm_meanstd_mean_b0,
-                            norm_factors_month.norm_meanstd_mean_b1,
-                            norm_factors_month.norm_meanstd_mean_b2,
-                            norm_factors_month.norm_meanstd_mean_b3])
-
-        dn_median = np.array([norm_factors_month.norm_meanstd_median_b0,
-                              norm_factors_month.norm_meanstd_median_b1,
-                              norm_factors_month.norm_meanstd_median_b2,
-                              norm_factors_month.norm_meanstd_median_b3])
+        if normalise == 'to_meanstd':
+            avg_stat = np.array([norm_factors_month.norm_meanstd_mean_b0,
+                                 norm_factors_month.norm_meanstd_mean_b1,
+                                 norm_factors_month.norm_meanstd_mean_b2,
+                                 norm_factors_month.norm_meanstd_mean_b3])
+        else:
+            avg_stat = np.array([norm_factors_month.norm_meanstd_median_b0,
+                                 norm_factors_month.norm_meanstd_median_b1,
+                                 norm_factors_month.norm_meanstd_median_b2,
+                                 norm_factors_month.norm_meanstd_median_b3])
 
         dn_std = np.array([norm_factors_month.norm_meanstd_std_b0,
                            norm_factors_month.norm_meanstd_std_b1,
                            norm_factors_month.norm_meanstd_std_b2,
                            norm_factors_month.norm_meanstd_std_b3])
 
-        avg_stat = dn_mean if normalise == 'to_meanstd' else dn_median
         data = (bands - avg_stat) / dn_std
 
         extent, boundary, distance = model.net.predict(data[np.newaxis, ...], batch_size=batch_size)
 
-        extent = crop_array(extent)
-        boundary = crop_array(boundary)
-        distance = crop_array(distance)
+        extent = crop_array(extent, buffer=crop_buffer)
+        boundary = crop_array(boundary, buffer=crop_buffer)
+        distance = crop_array(distance, buffer=crop_buffer)
 
         extent_pred.append(extent)
         boundary_pred.append(boundary)
         distance_pred.append(distance)
 
         tmp = {}
-        for mask_name, gt, pred in [('extent', eop[reference_extent], extent),
-                                    ('boundary', eop[reference_boundary], boundary),
-                                    ('distance', eop[reference_distance], distance)]:
-            tmp[f'{mask_name}_loss'] = tanimoto_loss(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()
-            tmp[f'{mask_name}_acc'] = accuracy_metric(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()
-            tmp[f'{mask_name}_iou'] = iou_metric(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()
-            tmp[f'{mask_name}_mcc'] = mcc_metric(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()[1]
+        if calc_metrics:
+            for mask_name, gt, pred in [('extent', eop[reference_extent], extent),
+                                        ('boundary', eop[reference_boundary], boundary),
+                                        ('distance', eop[reference_distance], distance)]:
+                tmp[f'{mask_name}_loss'] = tanimoto_loss(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()
+                tmp[f'{mask_name}_acc'] = accuracy_metric(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()
+                tmp[f'{mask_name}_iou'] = iou_metric(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()
+                tmp[f'{mask_name}_mcc'] = mcc_metric(binary_one_hot_encoder(gt[np.newaxis, ...]), pred).numpy()[1]
 
-            accuracy_metric.reset_states()
-            iou_metric.reset_states()
-            mcc_metric.reset_states()
+                accuracy_metric.reset_states()
+                iou_metric.reset_states()
+                mcc_metric.reset_states()
 
-        metrics.append(tmp)
+            metrics.append(tmp)
+        
+        del data, extent, boundary, distance
+        
+    if len(extent_pred) != len(eop.timestamp):
+        raise ValueError(f'Error in prediction: not all timeframes have been predicted')
 
     extent_pred = np.concatenate(extent_pred, axis=0)
     boundary_pred = np.concatenate(boundary_pred, axis=0)
@@ -175,8 +181,11 @@ def prediction_fn(eop: EOPatch, n_classes: int,
     eop[boundary_feature] = boundary_pred[..., [1]]
     eop[distance_feature] = distance_pred[..., [1]]
 
-    eop.meta_info[f'metrics_{suffix}'] = metrics
-    eop.meta_info[f'model_{suffix}'] = model_name
+    if calc_metrics:
+        eop.meta_info[f'metrics_{suffix}'] = metrics
+        eop.meta_info[f'model_{suffix}'] = model_name
+    
+    del extent_pred, boundary_pred, distance_pred, padded
 
     return eop
 
@@ -220,25 +229,25 @@ def load_model(filesystem: S3FS, config: PredictionConfig) -> ResUnetA:
     return model
 
 
-def run_prediction_on_eopatch(eopatch_name: str, config: PredictionConfig,
+def run_prediction_on_eopatch(eopatch_name: str, config: PredictionConfig, filesystem: S3FS, 
                               model: ResUnetA = None, normalisation_factors: pd.DataFrame = None) -> dict:
     """ Run prediction workflow on one eopatch. Model and dataframe can be provided to avoid loading them every time """
     sh_config = set_sh_config(config)
-
-    filesystem = prepare_filesystem(config)
-
     if normalisation_factors is None:
         normalisation_factors = load_metadata(filesystem, config)
 
     if model is None:
         model = load_model(filesystem, config)
 
+    load_ref = all([ref for ref in [config.reference_distance, config.reference_extent, config.reference_boundary]])
+    if load_ref:
+        feats = [config.feature_bands, config.reference_distance, config.reference_extent, config.reference_boundary,
+                 FeatureType.TIMESTAMP, FeatureType.META_INFO, FeatureType.BBOX]
+    else:
+        feats = [config.feature_bands, FeatureType.TIMESTAMP, FeatureType.META_INFO, FeatureType.BBOX]
+
     load_task = LoadTask(path=f's3://{config.bucket_name}/{config.eopatches_folder}',
-                         features=[config.feature_bands,
-                                   config.reference_distance, config.reference_extent, config.reference_boundary,
-                                   FeatureType.TIMESTAMP,
-                                   FeatureType.META_INFO,
-                                   FeatureType.BBOX],
+                         features=feats,
                          config=sh_config)
 
     save_task = SaveTask(path=f's3://{config.bucket_name}/{config.eopatches_folder}',
@@ -261,13 +270,15 @@ def run_prediction_on_eopatch(eopatch_name: str, config: PredictionConfig,
                             batch_size=config.batch_size,
                             n_classes=config.n_classes,
                             bands_feature=config.feature_bands,
+                            pad_buffer=config.pad_buffer, 
+                            crop_buffer=config.crop_buffer,
                             reference_boundary=config.reference_boundary,
                             reference_distance=config.reference_distance,
                             reference_extent=config.reference_extent)
 
         _ = save_task.execute(eop, eopatch_folder=eopatch_name)
 
-        del eop
+        del eop, load_task, save_task
 
         return dict(name=eopatch_name, status='Success')
 

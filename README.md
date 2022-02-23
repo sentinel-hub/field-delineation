@@ -74,33 +74,33 @@ This repository has the following content:
 
  * `fd`: modules implementing each part of the workflow;
  * `input-data`: folder storing the file defining the AOI and the consequent grid definition file;
- * `notebooks`: folder storing the ordered notebooks to execute the end-to-end workflow.
+ * `notebooks`: folder storing the example notebook to execute the end-to-end workflow.
 
-### Notebooks
+### End2End Execution
 
 The field delineation workflow has been designed to scale to large AOIs, by downloading data quickly and efficiently, 
 and by parallelizing execution of pipelines over the tiled data.
 
-[These notebooks](./notebooks/) showcase the different pipelines required to reproduce the entire end-to-end workflow:
+[The End2End notebook](./notebooks/field-delineation-end2end.ipynb) showcases the entire procedure to reproduce the entire end-to-end workflow.
+The following steps are executed: 
 
- * `01-data-download`: downloading the Sentinel-2 images (B-G-R-NIR) using Sentinel-Hub Batch API; 
- * `02-tiffs-to-patches`: converts the downloaded tiff files into `EOPatches` (see [`eo-learn`](https://eo-learn.readthedocs.io/en/latest/)), 
+ * `Data download`: downloading the Sentinel-2 images (B-G-R-NIR) using Sentinel-Hub Batch API; 
+ * `Conversion of tiffs to patches`: converts the downloaded tiff files into `EOPatches` (see [`eo-learn`](https://eo-learn.readthedocs.io/en/latest/)), 
    and computes cloud masks from cloud probabilities;
- * `03-vector-to-raster`: adds reference vector data from a database to `EOPatches` and creates reference masks used 
+ * `Vector to raster`: adds reference vector data from a database to `EOPatches` and creates reference masks used 
    for training of the model;
- * `04-patchlets-sampling`: sample `EOPatches` into smaller `256x256` patchlets for each cloud-free time-stamp. The 
+ * `Patchlets sampling`: sample `EOPatches` into smaller `256x256` patchlets for each cloud-free time-stamp. The 
    sampling can be done for positive and negative examples separately;
- * `05-patchlets-to-npz-files`: the sampled patchlets are chunked and stored into multiple `.npz` files, allowing 
+ * `Patchlets to npz files`: the sampled patchlets are chunked and stored into multiple `.npz` files, allowing 
    to efficiently access the data during training;
- * `06-create-normalization-stats`: compute normalisation factors for the S2 bands (e.g. B-G-R-NIR) per month. These 
+ * `Create normalization stats`: compute normalisation factors for the S2 bands (e.g. B-G-R-NIR) per month. These 
    factors will be used to normalise the data before training and evaluation;
- * `07-patchlets-split-k-folds`: split patchlets into K-folds, allowing to perform a robust cross-validation of the models;
- * `08-train-model-from-cached-npz`: train k-models, one for each left out fold. The [`ResUnet-a` architecture](https://www.sciencedirect.com/science/article/abs/pii/S0924271620300149) 
+ * `Patchlets split into k-folds`: split patchlets into K-folds, allowing to perform a robust cross-validation of the models;
+ * `Train model from cached npz`: train k-models, one for each left out fold. The [`ResUnet-a` architecture](https://www.sciencedirect.com/science/article/abs/pii/S0924271620300149) 
    implemented within [`eo-flow`](https://github.com/sentinel-hub/eo-flow) is used as model. A single model can be 
    derived by averaging the weights of the k-fold models; 
- * `09-predict-eopatches`: use the trained models to predict parcel boundary probabilities for the entire dataset;
- * `10-post-process-predictions`: merge the predictions temporally and combine the predicted extent and boundary 
+ * `Predict eopatches`: use the trained models to predict parcel boundary probabilities for the entire dataset;
+ * `Post process predictions`: merge the predictions temporally and combine the predicted extent and boundary 
    probabilities. A time interval can be specified over which the predictions are temporally aggregated;
- * `11-create-vectors`: vectorise the combined field delineation probabilities; 
- * `12-utm-zone-merging`: combine spatially vectors from multiple UTM zone if applicable.
-
+ * `Create vectors`: vectorise the combined field delineation probabilities; 
+ * `Utm zone merging`: combine spatially vectors from multiple UTM zone if applicable.
