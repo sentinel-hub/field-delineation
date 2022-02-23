@@ -74,7 +74,7 @@ This repository has the following content:
 
  * `fd`: modules implementing each part of the workflow;
  * `input-data`: folder storing the file defining the AOI and the consequent grid definition file;
- * `notebooks`: folder storing the examplesmple  notebook to execute the end-to-end workflow.
+ * `notebooks`: folder storing the example notebook to execute the end-to-end workflow.
 
 ### End2End Execution
 
