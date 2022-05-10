@@ -4,7 +4,7 @@ This repo contains code to generate automatic contours for agricultural parcels,
 given Sentinel-2 images. This code has been used ot generate contours for Lithuania 
 and the province of Castilla y Leon.
 
-You can find more information about this project in the blog post [Parcel Boundary Detection for CAP](https://medium.com/sentinel-hub/parcel-boundary-detection-for-cap-2a316a77d2f6). 
+You can find more information about this project in the blog post [Parcel Boundary Detection for CAP](https://medium.com/sentinel-hub/parcel-boundary-detection-for-cap-2a316a77d2f6). The [webinar](https://www.youtube.com/watch?v=czRCApJCYIo) walks through the software and how to use it.  
 
 
 ## Introduction
