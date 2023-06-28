@@ -1,3 +1,5 @@
+⚠️  **THIS REPOSITORY IS NOT ACTIVELY MAINTAINED. THIS MEANS THE CODE WILL NOT WORK WITH NEWER DEPENDENCY VERSIONS.** ⚠️
+
 # NIVA - Automatic field delineation
 
 This repo contains code to generate automatic contours for agricultural parcels,
