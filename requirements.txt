@@ -18,3 +18,4 @@ numpy<=1.22.0
 lxml==4.9.3
 pandas<=1.4.1
 fiona<=1.8.21
+shapely<=1.7.1
