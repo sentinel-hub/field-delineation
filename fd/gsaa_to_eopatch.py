@@ -29,18 +29,15 @@ from sentinelhub import SHConfig
 from eolearn.core import FeatureType, EOPatch, EOTask, EOWorkflow, LinearWorkflow, \
     LoadTask, SaveTask, OverwritePermission
 from eolearn.geometry import VectorToRaster
+from eolearn.io.geometry_io import VectorImportTask
+
 
 from .utils import BaseConfig, set_sh_config
 
 
 @dataclass
 class GsaaToEopatchConfig(BaseConfig):
-    database: str
-    user: str
-    password: str
-    host: str
-    port: str
-    crs: pyproj.crs
+    reference_file_path: str
     vector_feature: Tuple[FeatureType, str]
     extent_feature: Tuple[FeatureType, str]
     boundary_feature: Tuple[FeatureType, str]
