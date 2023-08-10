@@ -25,7 +25,7 @@ def get_version():
 
 setup(
     name='fd',
-    python_requires='>=3.6',
+    python_requires='>=3.6, <3.8',
     version=get_version(),
     description='EO Research Field Delineation',
     url='https://gitlab.com/nivaeu/uc2_fielddelineation',

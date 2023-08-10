@@ -39,7 +39,6 @@ python setup.py install --user
 In addition, the field delineation workflow uses the following:
 
  * Docker containers;
- * `psql` PostgreSQL database; 
  * `gdal` geospatial processing library, version >2.4.0. 
 
 The numbered notebooks showcase how to execute the end-to-end workflow.
@@ -65,7 +64,7 @@ region = "eu-central-1"
 In order to execute the entire workflow, including training of the deep learning model, the following files are required:
 
  * file with geometry of the AOI (e.g. in `GeoJSON` format); 
- * file with reference GSAA parcel boundaries (e.g. in `ESRI Shapefile` format);
+ * file with reference GSAA parcel boundaries (e.g. in `GPKG` format (or similar));
  * the time-interval over which we want to estimate parcel boundaries. Predictions can be made for 
    sub-intervals of this given time period (e.g. aggregation can be done over an arbitrary time interval as a 
    post-processing step)
