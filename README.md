@@ -1,4 +1,6 @@
-⚠️  **THIS REPOSITORY IS NOT ACTIVELY MAINTAINED. THIS MEANS THE CODE WILL NOT WORK WITH NEWER DEPENDENCY VERSIONS.** ⚠️
+⚠️  **THIS REPOSITORY IS ARCHIVED.** ⚠️
+
+_As the repository is not maintained, we are archiving it. The code works with the fixed versions of the packages in the `requirements.txt` file. You can also make use of the paid Field Delineation service on [EuroDataCube](https://collections.eurodatacube.com/field-delineation/) or contact us directly for large orders at `eoresearch [at] sinergise.com`._
 
 # NIVA - Automatic field delineation
 
